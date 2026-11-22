@@ -80,12 +80,16 @@ except Exception: print('?')
 " 2>/dev/null)
   if is_tun; then tun="TUN开"; else tun="TUN关"; fi
   node=$(get_node)
-  echo "mihomo: 运行中 | 模式:${mode:-?} | ${tun} | 节点:${node:-未知}"
+  if is_running; then
+    echo "mihomo: 运行中 | 模式:${mode:-?} | ${tun} | 节点:${node:-未知}"
+  else
+    echo "mihomo: 已暂停(直连, 服务运行中) | 节点:${node:-无}"
+  fi
 }
 
 # 机器可读输出（供状态栏 QML 轮询）
 dump() {
-  if ! is_active; then
+  if ! is_running; then
     echo '{"running": false, "tun": false, "mode": "", "node": ""}'
     return
   fi
@@ -115,16 +119,44 @@ notify() {
 
 # ---- 控制操作 ----
 
+# 运行状态 = 服务进程活着, 且 (TUN 开 或 模式非直连)。
+# "软停" = mode direct + TUN 关: 服务进程保持运行(维持 DNS 劫持与网络栈),
+# 但所有流量直连, 代理停用 —— 网络保持可用, 这是停止/启动按钮的语义。
+is_running() {
+  if ! is_active; then return 1; fi
+  if is_tun; then return 0; fi
+  if is_mode direct; then return 1; fi
+  return 0
+}
+
 toggle_service() {
-  if is_active; then
-    systemctl stop "$UNIT" && notify-send -a "mihomo" "VPN" "已停止" 2>/dev/null
+  if ! is_active; then
+    # 服务进程已死(例如手动 systemctl stop): 直接拉起并恢复代理
+    systemctl start "$UNIT"
+    sleep 2
+    api -X PATCH /configs -d '{"tun":{"enable":true}}' >/dev/null
+    set_mode rule 1
+    resolvectl flush-caches 2>/dev/null || true
+    notify-send -a "mihomo" "VPN" "服务已启动" 2>/dev/null
+    return
+  fi
+  if is_running; then
+    # 软停: 直连 + 关 TUN。服务进程保持运行, 网络不会断。
+    api -X PATCH /configs -d '{"mode":"direct"}' >/dev/null
+    api -X PATCH /configs -d '{"tun":{"enable":false}}' >/dev/null
+    resolvectl flush-caches 2>/dev/null || true
+    notify-send -a "mihomo" "VPN" "代理已暂停（直连模式，网络保持可用）" 2>/dev/null
   else
-    systemctl start "$UNIT" && sleep 2 && notify-send -a "mihomo" "VPN" "已启动" 2>/dev/null
+    # 恢复: 开 TUN + 回规则模式
+    api -X PATCH /configs -d '{"tun":{"enable":true}}' >/dev/null
+    set_mode rule 1
+    resolvectl flush-caches 2>/dev/null || true
+    notify-send -a "mihomo" "VPN" "代理已恢复（TUN 全局接管）" 2>/dev/null
   fi
 }
 
 set_mode() {
-  local m="$1"
+  local m="$1" quiet="${2:-}"
   case "$m" in
     rule|global|direct) ;;
     *) echo "用法: mihomo-ctl mode <rule|global|direct>" >&2; exit 1 ;;
@@ -147,7 +179,7 @@ except Exception:
       api -X PUT "/proxies/GLOBAL" -d "{\"name\":\"$main\"}" >/dev/null
     fi
   fi
-  notify-send -a "mihomo" "VPN 模式" "已切换到 $m" 2>/dev/null
+  [ -z "$quiet" ] && notify-send -a "mihomo" "VPN 模式" "已切换到 $m" 2>/dev/null
 }
 
 toggle_tun() {
@@ -324,6 +356,7 @@ case "${1:-status}" in
   get-url) get_url ;;
   set-url) set_url "${2:-}" ;;
   is-active) is_active ;;
+  is-running) is_running ;;
   is-tun)    is_tun ;;
   is-mode)   is_mode "${2:-rule}" ;;
   get-node)  get_node ;;

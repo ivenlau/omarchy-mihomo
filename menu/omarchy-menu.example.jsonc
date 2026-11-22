@@ -18,7 +18,7 @@
     "icon": "\uf011",
     "label": "启动 / 停止服务",
     "action": "__HOME__/.local/bin/mihomo-ctl toggle-service",
-    "checked": "__HOME__/.local/bin/mihomo-ctl is-active",
+    "checked": "__HOME__/.local/bin/mihomo-ctl is-running",
     "description": "启停 mihomo 服务（停用后无代理）"
   },
   "vpn.modeRule": {

@@ -17,9 +17,9 @@ BarWidget {
   readonly property string ctlPath: Quickshell.env("HOME") + "/.local/bin/mihomo-ctl"
 
   // Nerd Font 图标（已验证存在于 JetBrainsMono NF）
-  readonly property string iconRunningTun: "\uf132"   // fa-shield: TUN 全局接管
-  readonly property string iconRunningPort: "\uf0ac"  // fa-globe: 仅代理端口
-  readonly property string iconStopped: "\uf023"      // fa-lock: 已停止
+  readonly property string iconRunningTun: "\uf132"      // fa-shield: TUN 全局接管
+  readonly property string iconRunningPort: "\uf0ac"     // fa-globe: 仅代理端口
+  readonly property string iconStopped: "\udb82\udd9c"   // md-shield-off-outline: 空心破盾
 
   readonly property string iconText: {
     if (!root.running) return root.iconStopped
@@ -89,6 +89,7 @@ BarWidget {
     text: root.iconText
     slotSize: Style.bar.statusSlot
     active: root.running
+    useActiveColor: false       // active 也不用高亮色, 与其他图标保持一致
     tooltipText: root.tipText
     onPressed: function(b) {
       if (b === Qt.MiddleButton) {
