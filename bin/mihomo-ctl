@@ -6,7 +6,16 @@ API="http://127.0.0.1:9090"
 UNIT="mihomo.service"
 CFG_DIR="$HOME/.config/mihomo"
 
-api() { curl -s -m 5 "$API$1" 2>/dev/null; }
+api() {
+  # 用法: api <path> [curl参数...]  或  api -X <METHOD> <path> [curl参数...]
+  if [ "${1:-}" = "-X" ]; then
+    local method="$2"
+    shift 2
+    curl -s -m 5 -X "$method" "$API${1:-}" "${@:2}" 2>/dev/null
+  else
+    curl -s -m 5 "$API${1:-}" "${@:2}" 2>/dev/null
+  fi
+}
 
 # ---- 状态查询（供菜单 checked / 状态栏使用）----
 
@@ -121,6 +130,23 @@ set_mode() {
     *) echo "用法: mihomo-ctl mode <rule|global|direct>" >&2; exit 1 ;;
   esac
   api -X PATCH /configs -d "{\"mode\":\"$m\"}" >/dev/null
+  # 全局模式: GLOBAL 组默认指向 DIRECT, 等于全直连。
+  # 必须同时把 GLOBAL 指向订阅主选择组, 全局模式才有意义。
+  if [ "$m" = "global" ]; then
+    local main
+    main=$(api /proxies | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)['proxies']
+    print(next((k for k, v in d.items()
+                if v.get('type') == 'Selector' and k != 'GLOBAL'), ''))
+except Exception:
+    pass
+" 2>/dev/null)
+    if [ -n "$main" ]; then
+      api -X PUT "/proxies/GLOBAL" -d "{\"name\":\"$main\"}" >/dev/null
+    fi
+  fi
   notify-send -a "mihomo" "VPN 模式" "已切换到 $m" 2>/dev/null
 }
 
