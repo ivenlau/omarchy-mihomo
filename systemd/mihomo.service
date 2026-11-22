@@ -1,0 +1,23 @@
+[Unit]
+Description=Mihomo Clash Meta Proxy Core (TUN + HTTP/SOCKS)
+Documentation=https://github.com/MetaCubeX/mihomo
+After=network-online.target NetworkManager-wait-online.service
+Wants=network-online.target NetworkManager-wait-online.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mihomo -d /etc/mihomo
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1048576
+# TUN 需要的能力；不给 root 之外的多余权限
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_PTRACE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/mihomo
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,3 @@
+*.yaml.bak
+*.bak.*
+__pycache__/

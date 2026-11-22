@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# mihomo-sub-update — 拉取机场订阅并保留本地自定义设置
+# 流程: 下载 → 合并本地补丁(DNS/TUN/规则) → mihomo -t 校验 → 备份 → 写入用户配置
+# 之后由 mihomo-sub-update.service(root) 部署到 /etc/mihomo 并重启服务
+set -euo pipefail
+
+CFG_DIR="$HOME/.config/mihomo"
+SUB_URL="${MIHOMO_SUB_URL:-}"
+if [ -z "$SUB_URL" ] && [ -f "$CFG_DIR/subscription-url" ]; then
+  SUB_URL=$(head -1 "$CFG_DIR/subscription-url" | xargs)
+fi
+if [ -z "$SUB_URL" ]; then
+  echo "未配置订阅地址。请先运行: mihomo-ctl set-url <你的订阅链接>"
+  echo "或在状态栏 VPN 菜单 → 更新订阅 → 粘贴地址后确认。"
+  exit 1
+fi
+UA="clash-verge/v1.6.6"
+BACKUP_DIR="$CFG_DIR/backups"
+WORK="$(mktemp -d /tmp/mihomo-sub.XXXXXX)"
+DOWN="$WORK/subscribe.yaml"
+MERGED="$WORK/config.yaml"
+HDR="$WORK/headers.txt"
+trap 'rm -rf "$WORK"' EXIT
+
+step() { echo "==> $*"; }
+
+step "1/6 下载订阅"
+# 先直连（订阅站国内可达），失败则走本地代理
+if ! curl -sL -m 60 --noproxy '*' -A "$UA" -D "$HDR" -o "$DOWN" "$SUB_URL"; then
+  curl -sL -m 60 -A "$UA" -D "$HDR" -o "$DOWN" "$SUB_URL"
+fi
+[ -s "$DOWN" ] || { echo "订阅下载为空"; exit 1; }
+grep -q "proxies:" "$DOWN" || { echo "下载内容不是 Clash 配置"; exit 1; }
+
+step "2/6 合并本地自定义设置（DNS/TUN/附加规则）"
+python3 - "$DOWN" "$MERGED" <<'PYEOF'
+import sys, yaml
+
+src, dst = sys.argv[1], sys.argv[2]
+cfg = yaml.safe_load(open(src, encoding='utf-8'))
+if not isinstance(cfg, dict) or not cfg.get('proxies'):
+    sys.exit("订阅配置里没有 proxies 节点")
+
+# ---- 固化的本地设置（勿动：反 DNS 污染 + TUN 透明代理）----
+cfg['mixed-port'] = 7890
+cfg['allow-lan'] = False
+cfg['bind-address'] = '127.0.0.1'
+cfg['mode'] = 'rule'
+cfg['log-level'] = 'info'
+cfg['external-controller'] = '127.0.0.1:9090'
+cfg['dns'] = {
+    'enable': True,
+    'ipv6': False,
+    'default-nameserver': ['223.5.5.5', '119.29.29.29'],
+    'enhanced-mode': 'fake-ip',
+    'fake-ip-range': '198.18.0.1/16',
+    'fake-ip-filter': ['+.lan', 'localhost', 'time.*.com', 'time.windows.com',
+                       '+.msftconnecttest.com', '+.msftncsi.com'],
+    'use-hosts': True,
+    'nameserver': ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
+    'proxy-server-nameserver': ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
+    # 注意: 不配 fallback。国外域名走代理由远端解析; 本地解析仅用于
+    # DIRECT 出站与 GEOIP 判断, fallback(境外DoH直连)只会导致解析超时。
+}
+cfg['tun'] = {
+    'enable': True,
+    'stack': 'gvisor',
+    'auto-route': True,
+    'auto-detect-interface': True,
+    'dns-hijack': ['any:53'],
+}
+
+# ---- 附加域名规则（保证 x.com 等有域名级规则）----
+groups = cfg.get('proxy-groups') or []
+main_group = next((g['name'] for g in groups
+                   if isinstance(g, dict) and str(g.get('type', '')).lower() == 'select'
+                   and g['name'] != 'GLOBAL'), None)
+if main_group:
+    rules = cfg.get('rules') or []
+    wanted = {'x.com': f'DOMAIN-SUFFIX,x.com,{main_group}',
+              't.co': f'DOMAIN-SUFFIX,t.co,{main_group}',
+              'xtwitter.com': f'DOMAIN-SUFFIX,xtwitter.com,{main_group}'}
+    # 去掉旧的，插到 MATCH 之前
+    rules = [r for r in rules
+             if not (isinstance(r, str) and
+                     any(r.startswith(f'DOMAIN-SUFFIX,{d},') for d in wanted))]
+    at = next((i for i, r in enumerate(rules) if isinstance(r, str) and r.startswith('MATCH,')), len(rules))
+    rules[at:at] = list(wanted.values())
+    cfg['rules'] = rules
+
+yaml.safe_dump(cfg, open(dst, 'w', encoding='utf-8'),
+               allow_unicode=True, sort_keys=False, default_flow_style=False, width=4096)
+print(f"    节点 {len(cfg.get('proxies') or [])} 个 | 规则 {len(cfg.get('rules') or [])} 条 | 主组: {main_group or '无'}")
+PYEOF
+
+step "3/6 校验配置 (mihomo -t)"
+MIHOMO_BIN="${MIHOMO_BIN:-$(command -v mihomo 2>/dev/null || echo "$HOME/.local/bin/mihomo")}"
+"$MIHOMO_BIN" -t -d "$CFG_DIR" -f "$MERGED" 2>&1 | grep -vE "level=info" || true
+
+step "4/6 备份当前生效配置"
+mkdir -p "$BACKUP_DIR"
+if [ -f /etc/mihomo/config.yaml ]; then
+  cp -f /etc/mihomo/config.yaml "$BACKUP_DIR/config-$(date +%Y%m%d-%H%M%S).yaml"
+  ls -1t "$BACKUP_DIR" | tail -n +6 | while read -r old; do rm -f "$BACKUP_DIR/$old"; done  # 保留最近 5 份
+fi
+
+step "5/6 写入用户配置"
+cp -f "$MERGED" "$CFG_DIR/config.yaml"
+
+step "6/6 完成（部署由 mihomo-sub-update.service 执行）"
+
+# 输出流量信息（供通知用）
+if [ -f "$HDR" ] && grep -qi "subscription-userinfo" "$HDR"; then
+  INFO=$(grep -i "subscription-userinfo" "$HDR" | head -1 | cut -d: -f2- | tr -d '\r' | xargs)
+  echo "SUBSCRIPTION_USERINFO: $INFO"
+fi

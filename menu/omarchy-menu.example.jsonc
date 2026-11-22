@@ -1,0 +1,52 @@
+{
+  // VPN / Mihomo 控制菜单（命令用绝对路径：shell 环境不含 ~/.local/bin）
+  "vpn": { "icon": "\udb84\udc1a", "label": "MiHomo VPN", "description": "机场代理服务控制" },
+
+  "vpn.update": {
+    "icon": "\udb81\udda9",
+    "label": "更新订阅",
+    "action": "qs ipc -p /usr/share/omarchy/shell call __PLUGIN_ID__.sub open",
+    "description": "弹窗查看/修改订阅地址并立即更新，完成后通知"
+  },
+  "vpn.status": {
+    "icon": "\udb83\udeb6",
+    "label": "查看状态",
+    "action": "__HOME__/.local/bin/mihomo-ctl notify",
+    "description": "桌面通知显示运行状态、模式和当前节点"
+  },
+  "vpn.service": {
+    "icon": "\uf011",
+    "label": "启动 / 停止服务",
+    "action": "__HOME__/.local/bin/mihomo-ctl toggle-service",
+    "checked": "__HOME__/.local/bin/mihomo-ctl is-active",
+    "description": "启停 mihomo 服务（停用后无代理）"
+  },
+  "vpn.modeRule": {
+    "icon": "\udb83\udd88",
+    "label": "规则模式",
+    "action": "__HOME__/.local/bin/mihomo-ctl mode rule",
+    "checked": "__HOME__/.local/bin/mihomo-ctl is-mode rule",
+    "description": "国内直连，国外走代理"
+  },
+  "vpn.modeGlobal": {
+    "icon": "\udb80\udfe2",
+    "label": "全局模式",
+    "action": "__HOME__/.local/bin/mihomo-ctl mode global",
+    "checked": "__HOME__/.local/bin/mihomo-ctl is-mode global",
+    "description": "所有流量走代理节点"
+  },
+  "vpn.modeDirect": {
+    "icon": "\udb83\udeb7",
+    "label": "直连模式",
+    "action": "__HOME__/.local/bin/mihomo-ctl mode direct",
+    "checked": "__HOME__/.local/bin/mihomo-ctl is-mode direct",
+    "description": "不走代理节点，全部直连"
+  },
+  "vpn.tun": {
+    "icon": "\udb84\udc22",
+    "label": "TUN 透明代理",
+    "action": "__HOME__/.local/bin/mihomo-ctl toggle-tun",
+    "checked": "__HOME__/.local/bin/mihomo-ctl is-tun",
+    "description": "全局接管所有流量；关闭后仅 7890 端口代理"
+  }
+}

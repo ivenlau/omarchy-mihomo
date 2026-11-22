@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+# mihomo-ctl — mihomo 服务控制脚本（配合 Omarchy 菜单/状态栏使用）
+# 用法: mihomo-ctl <command> [args]
+
+API="http://127.0.0.1:9090"
+UNIT="mihomo.service"
+CFG_DIR="$HOME/.config/mihomo"
+
+api() { curl -s -m 5 "$API$1" 2>/dev/null; }
+
+# ---- 状态查询（供菜单 checked / 状态栏使用）----
+
+is_active() {
+  systemctl is-active --quiet "$UNIT" 2>/dev/null
+}
+
+# TUN 实际生效状态从 API 读（文件里的 enable 只是启动默认值）
+is_tun() {
+  api /configs | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    sys.exit(0 if d.get('tun', {}).get('enable') else 1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null
+}
+
+is_mode() {
+  local want="$1"
+  local cur
+  cur=$(api /configs | python3 -c "
+import sys, json
+try:
+    print(json.load(sys.stdin).get('mode', ''))
+except Exception:
+    pass
+" 2>/dev/null)
+  [ "$cur" = "$want" ]
+}
+
+# 当前实际生效节点（跟随选择组链：主组 -> url-test/fallback -> 具体节点）
+get_node() {
+  api /proxies | python3 -c "
+import sys, json
+GROUPS = ('Selector', 'URLTest', 'Fallback')
+try:
+    d = json.load(sys.stdin)['proxies']
+    seen = set()
+    name = next((k for k, v in d.items()
+                 if v.get('type') == 'Selector' and k != 'GLOBAL'), None)
+    while name and name in d and name not in seen and d[name].get('type') in GROUPS:
+        seen.add(name)
+        name = d[name].get('now', '')
+    print(name or '')
+except Exception:
+    pass
+" 2>/dev/null
+}
+
+summary() {
+  if ! is_active; then
+    echo "mihomo: 已停止"
+    return
+  fi
+  local mode tun node
+  mode=$(api /configs | python3 -c "
+import sys, json
+try: print(json.load(sys.stdin).get('mode',''))
+except Exception: print('?')
+" 2>/dev/null)
+  if is_tun; then tun="TUN开"; else tun="TUN关"; fi
+  node=$(get_node)
+  echo "mihomo: 运行中 | 模式:${mode:-?} | ${tun} | 节点:${node:-未知}"
+}
+
+# 机器可读输出（供状态栏 QML 轮询）
+dump() {
+  if ! is_active; then
+    echo '{"running": false, "tun": false, "mode": "", "node": ""}'
+    return
+  fi
+  local node json
+  node=$(get_node)
+  json=$(api /configs | NODE="$node" python3 -c "
+import sys, json, os
+try:
+    d = json.load(sys.stdin)
+    print(json.dumps({
+        'running': True,
+        'tun': bool(d.get('tun', {}).get('enable')),
+        'mode': d.get('mode', ''),
+        'node': os.environ.get('NODE', ''),
+    }))
+except Exception:
+    print('{\"running\": true, \"tun\": false, \"mode\": \"\", \"node\": \"\"}')
+" 2>/dev/null)
+  echo "${json}"
+}
+
+notify() {
+  local msg
+  msg=$(summary)
+  notify-send -a "mihomo" "VPN 状态" "$msg" 2>/dev/null || echo "$msg"
+}
+
+# ---- 控制操作 ----
+
+toggle_service() {
+  if is_active; then
+    systemctl stop "$UNIT" && notify-send -a "mihomo" "VPN" "已停止" 2>/dev/null
+  else
+    systemctl start "$UNIT" && sleep 2 && notify-send -a "mihomo" "VPN" "已启动" 2>/dev/null
+  fi
+}
+
+set_mode() {
+  local m="$1"
+  case "$m" in
+    rule|global|direct) ;;
+    *) echo "用法: mihomo-ctl mode <rule|global|direct>" >&2; exit 1 ;;
+  esac
+  api -X PATCH /configs -d "{\"mode\":\"$m\"}" >/dev/null
+  notify-send -a "mihomo" "VPN 模式" "已切换到 $m" 2>/dev/null
+}
+
+toggle_tun() {
+  if is_tun; then
+    api -X PATCH /configs -d '{"tun":{"enable":false}}' >/dev/null
+    notify-send -a "mihomo" "TUN 透明代理" "已关闭（仅代理端口模式）" 2>/dev/null
+  else
+    api -X PATCH /configs -d '{"tun":{"enable":true}}' >/dev/null
+    notify-send -a "mihomo" "TUN 透明代理" "已开启（全局接管）" 2>/dev/null
+  fi
+}
+
+cycle_mode() {
+  local cur next
+  cur=$(api /configs | python3 -c "
+import sys, json
+try: print(json.load(sys.stdin).get('mode','rule'))
+except Exception: print('rule')
+" 2>/dev/null)
+  case "$cur" in
+    rule)   next="global" ;;
+    global) next="direct" ;;
+    *)      next="rule" ;;
+  esac
+  set_mode "$next"
+}
+
+# 订阅地址: 文件覆盖 > 无默认(需用户配置)
+SUB_URL_FILE="$CFG_DIR/subscription-url"
+
+get_url() {
+  if [ -f "$SUB_URL_FILE" ]; then
+    head -1 "$SUB_URL_FILE" | xargs
+  else
+    echo ""
+  fi
+}
+
+set_url() {
+  local u="$1"
+  if [ -z "$u" ]; then
+    rm -f "$SUB_URL_FILE"   # 空 = 恢复默认
+  else
+    mkdir -p "$CFG_DIR"
+    printf '%s\n' "$u" > "$SUB_URL_FILE"
+  fi
+}
+
+update_sub() {
+  local out url result code
+  url=$(get_url)
+
+  # 输入对话框: 确认 = 输入内容(exit 0) / 返回/关闭 = exit 1 / 清空 = 输出"清空"(exit 0)
+  while true; do
+    result=$(zenity --entry \
+      --title="VPN 订阅更新" \
+      --text="订阅地址（可修改，确认后立即更新）：" \
+      --entry-text="$url" \
+      --ok-label="确认" --cancel-label="返回" \
+      --extra-button="清空" 2>/dev/null)
+    code=$?
+    # zenity 4.x: 清空按钮 = 输出按钮文本 + exit 1, 须先于 exit code 判断
+    if [ "$result" = "清空" ]; then
+      url=""                                   # 清空输入框，重新弹出
+      continue
+    fi
+    [ "$code" -ne 0 ] && return 0              # 返回 / 关闭窗口 / Esc：不更新
+    if [ -z "$result" ]; then
+      zenity --error --title="VPN 订阅" --text="订阅地址不能为空。" 2>/dev/null
+      continue
+    fi
+    if ! [[ "$result" =~ ^https?:// ]]; then
+      zenity --error --title="VPN 订阅" --text="地址需要以 http:// 或 https:// 开头。" 2>/dev/null
+      url="$result"
+      continue
+    fi
+    url="$result"
+    break
+  done
+
+  set_url "$url"
+  notify-send -a "mihomo" "VPN 订阅" "正在更新订阅…" 2>/dev/null
+  if out=$("$HOME/.local/bin/mihomo-sub-update" 2>&1); then
+    # 部署到 /etc/mihomo 并重启服务（polkit 免密）
+    if systemctl start --quiet mihomo-sub-update.service; then
+      local info nodes
+      nodes=$(api /proxies 2>/dev/null | python3 -c "
+import sys, json
+try: print(len(json.load(sys.stdin)['proxies']))
+except Exception: print('?')" 2>/dev/null)
+      info=$(grep '^SUBSCRIPTION_USERINFO:' <<<"$out" | cut -d' ' -f2-)
+      local msg="订阅已更新并部署（${nodes:-?} 个节点）"
+      if [ -n "$info" ]; then
+        msg+="
+$(python3 - "$info" <<'PYEOF'
+import sys, datetime
+d = dict(kv.split('=', 1) for kv in sys.argv[1].split('; ') if '=' in kv)
+up, down, total = int(d.get('upload', 0)), int(d.get('download', 0)), int(d.get('total', 0))
+exp = int(d.get('expire', 0))
+if total:
+    used = up + down
+    msg = f"流量: {used/2**30:.1f}G / {total/2**30:.0f}G ({used*100//total}%)"
+    if exp:
+        msg += f" | 到期: {datetime.datetime.fromtimestamp(exp).strftime('%Y-%m-%d')}"
+    print(msg)
+PYEOF
+)"
+      fi
+      notify-send -a "mihomo" "VPN 订阅" "$msg" 2>/dev/null
+      echo "OK: $msg"
+    else
+      notify-send -a "mihomo" "VPN 订阅" "部署失败（mihomo-sub-update.service）" 2>/dev/null
+      echo "部署失败"; exit 1
+    fi
+  else
+    notify-send -a "mihomo" "VPN 订阅" "更新失败：订阅站不可达（稍后再试）" 2>/dev/null
+    echo "更新失败"; exit 1
+  fi
+}
+
+# 非交互更新（供对话框/脚本调用）: set-url → 下载合并 → 部署
+do_update() {
+  local url="$1"
+  [ -z "$url" ] && { echo "订阅地址为空"; return 1; }
+  if ! [[ "$url" =~ ^https?:// ]]; then
+    echo "订阅地址需以 http:// 或 https:// 开头"
+    return 1
+  fi
+  set_url "$url"
+  local out
+  if out=$("$HOME/.local/bin/mihomo-sub-update" 2>&1); then
+    if systemctl start --quiet mihomo-sub-update.service; then
+      local info nodes msg
+      nodes=$(api /proxies 2>/dev/null | python3 -c "
+import sys, json
+try: print(len(json.load(sys.stdin)['proxies']))
+except Exception: print('?')" 2>/dev/null)
+      msg="订阅已更新并部署（${nodes:-?} 个节点）"
+      info=$(grep '^SUBSCRIPTION_USERINFO:' <<<"$out" | cut -d' ' -f2-)
+      if [ -n "$info" ]; then
+        msg+="
+$(python3 - "$info" <<'PYEOF'
+import sys, datetime
+d = dict(kv.split('=', 1) for kv in sys.argv[1].split('; ') if '=' in kv)
+up, down, total = int(d.get('upload', 0)), int(d.get('download', 0)), int(d.get('total', 0))
+exp = int(d.get('expire', 0))
+if total:
+    used = up + down
+    m = f"流量: {used/2**30:.1f}G / {total/2**30:.0f}G ({used*100//total}%)"
+    if exp:
+        m += f" | 到期: {datetime.datetime.fromtimestamp(exp).strftime('%Y-%m-%d')}"
+    print(m)
+PYEOF
+)"
+      fi
+      notify-send -a "mihomo" "VPN 订阅" "$msg" 2>/dev/null
+      echo "OK: $msg"
+      return 0
+    fi
+  fi
+  notify-send -a "mihomo" "VPN 订阅" "更新失败：订阅地址不可达或返回内容无效" 2>/dev/null
+  echo "更新失败"
+  return 1
+}
+
+# ---- 入口 ----
+
+case "${1:-status}" in
+  status)  summary ;;
+  dump)    dump ;;
+  notify)  notify ;;
+  update-sub) update_sub ;;
+  do-update) do_update "${2:-}" ;;
+  get-url) get_url ;;
+  set-url) set_url "${2:-}" ;;
+  is-active) is_active ;;
+  is-tun)    is_tun ;;
+  is-mode)   is_mode "${2:-rule}" ;;
+  get-node)  get_node ;;
+  toggle-service) toggle_service ;;
+  start)     systemctl start "$UNIT" ;;
+  stop)      systemctl stop "$UNIT" ;;
+  mode)      set_mode "${2:?缺少模式参数}" ;;
+  cycle-mode) cycle_mode ;;
+  toggle-tun) toggle_tun ;;
+  help|*)
+    cat <<'USAGE'
+用法: mihomo-ctl <command> [args]
+
+状态查询:
+  status            状态摘要（文本）
+  notify            状态摘要（桌面通知）
+  is-active         服务是否运行（exit code）
+  is-tun            TUN 是否开启（exit code）
+  is-mode <m>       当前是否为指定模式 rule|global|direct（exit code）
+  get-node          输出当前节点名
+
+控制操作:
+  toggle-service    启动/停止服务（走 polkit）
+  start|stop        启动/停止服务
+  mode <m>          切换模式 rule|global|direct
+  cycle-mode        循环切换模式
+  toggle-tun        开/关 TUN 透明代理
+  update-sub        更新机场订阅并部署（弹窗确认订阅地址）
+  get-url           输出当前订阅地址
+  set-url <url>     设置订阅地址（空值恢复默认）
+USAGE
+    ;;
+esac

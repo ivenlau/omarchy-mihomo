@@ -1,0 +1,11 @@
+#!/bin/bash
+# root 运行: 把用户侧更新好的配置部署到 /etc/mihomo 并重启服务
+set -euo pipefail
+SRC=__HOME__/.config/mihomo/config.yaml
+DST=/etc/mihomo/config.yaml
+[ -s "$SRC" ] || { echo "源配置为空"; exit 1; }
+install -m 644 "$SRC" "$DST"
+systemctl restart mihomo.service
+sleep 3
+systemctl is-active --quiet mihomo.service || { echo "mihomo 重启后未运行"; exit 1; }
+echo "DEPLOY_OK"

@@ -1,0 +1,7 @@
+[Unit]
+Description=Deploy updated mihomo subscription config
+After=mihomo.service
+
+[Service]
+Type=oneshot
+ExecStart=__HOME__/.local/bin/omarchy-mihomo-deploy

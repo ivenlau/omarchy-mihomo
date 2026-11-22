@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "__PLUGIN_ID__",
+  "name": "Mihomo VPN",
+  "version": "1.1.0",
+  "author": "omarchy-mihomo",
+  "license": "MIT",
+  "description": "Mihomo VPN 状态显示与快捷控制",
+  "kinds": [
+    "bar-widget",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "Mihomo.qml",
+    "overlay": "SubDialog.qml"
+  },
+  "barWidget": {
+    "displayName": "Mihomo VPN",
+    "description": "机场代理运行状态；点击打开控制菜单（启停/模式/TUN/更新订阅）",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

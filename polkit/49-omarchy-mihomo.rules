@@ -1,0 +1,10 @@
+// Allow members of "wheel" to manage mihomo units without a password.
+// Scope is limited to these two units on purpose.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.isInGroup("wheel") &&
+        (action.lookup("unit") == "mihomo.service" ||
+         action.lookup("unit") == "mihomo-sub-update.service")) {
+        return polkit.Result.YES;
+    }
+});
