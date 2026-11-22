@@ -14,7 +14,7 @@
 全新 Omarchy 系统上：
 
 ```bash
-git clone https://github.com/<你的用户名>/omarchy-mihomo.git
+git clone https://github.com/ivenlau/omarchy-mihomo.git
 cd omarchy-mihomo
 ./install.sh
 ```
@@ -22,7 +22,7 @@ cd omarchy-mihomo
 或一行远程安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<你的用户名>/omarchy-mihomo/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ivenlau/omarchy-mihomo/main/install.sh | bash
 ```
 
 安装脚本会：
