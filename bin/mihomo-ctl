@@ -143,7 +143,7 @@ toggle_service() {
     api -X PATCH /configs -d '{"tun":{"enable":true}}' >/dev/null
     set_mode rule 1
     resolvectl flush-caches 2>/dev/null || true
-    notify-send -a "mihomo" "VPN" "服务已启动" 2>/dev/null
+    notify-send -a "mihomo" "MiHomo VPN" "代理已开启" 2>/dev/null
     return
   fi
   if is_running; then
@@ -151,13 +151,13 @@ toggle_service() {
     api -X PATCH /configs -d '{"mode":"direct"}' >/dev/null
     api -X PATCH /configs -d '{"tun":{"enable":false}}' >/dev/null
     resolvectl flush-caches 2>/dev/null || true
-    notify-send -a "mihomo" "VPN" "代理已暂停（直连模式，网络保持可用）" 2>/dev/null
+    notify-send -a "mihomo" "MiHomo VPN" "代理已停止" 2>/dev/null
   else
     # 恢复: 开 TUN + 回规则模式
     api -X PATCH /configs -d '{"tun":{"enable":true}}' >/dev/null
     set_mode rule 1
     resolvectl flush-caches 2>/dev/null || true
-    notify-send -a "mihomo" "VPN" "代理已恢复（TUN 全局接管）" 2>/dev/null
+    notify-send -a "mihomo" "MiHomo VPN" "代理已开启" 2>/dev/null
   fi
 }
 
