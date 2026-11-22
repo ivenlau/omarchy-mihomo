@@ -129,6 +129,12 @@ is_running() {
   return 0
 }
 
+is_paused() {
+  if ! is_active; then return 0; fi    # 服务进程死了也算暂停
+  if is_running; then return 1; fi
+  return 0
+}
+
 toggle_service() {
   if ! is_active; then
     # 服务进程已死(例如手动 systemctl stop): 直接拉起并恢复代理
@@ -357,6 +363,7 @@ case "${1:-status}" in
   set-url) set_url "${2:-}" ;;
   is-active) is_active ;;
   is-running) is_running ;;
+  is-paused) is_paused ;;
   is-tun)    is_tun ;;
   is-mode)   is_mode "${2:-rule}" ;;
   get-node)  get_node ;;

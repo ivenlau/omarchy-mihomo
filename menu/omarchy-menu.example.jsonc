@@ -14,12 +14,19 @@
     "action": "__HOME__/.local/bin/mihomo-ctl notify",
     "description": "桌面通知显示运行状态、模式和当前节点"
   },
-  "vpn.service": {
-    "icon": "\uf011",
-    "label": "启动 / 停止服务",
+  "vpn.stop": {
+    "icon": "\uf04d",
+    "label": "停止服务",
     "action": "__HOME__/.local/bin/mihomo-ctl toggle-service",
-    "checked": "__HOME__/.local/bin/mihomo-ctl is-running",
-    "description": "启停 mihomo 服务（停用后无代理）"
+    "when": "__HOME__/.local/bin/mihomo-ctl is-running",
+    "description": "暂停代理并切换为直连（服务保持运行，网络不断）"
+  },
+  "vpn.start": {
+    "icon": "\uf04b",
+    "label": "启动服务",
+    "action": "__HOME__/.local/bin/mihomo-ctl toggle-service",
+    "when": "__HOME__/.local/bin/mihomo-ctl is-paused",
+    "description": "恢复代理（TUN 全局接管）"
   },
   "vpn.modeRule": {
     "icon": "\udb83\udd88",

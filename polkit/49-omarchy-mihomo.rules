@@ -1,10 +1,15 @@
 // Allow members of "wheel" to manage mihomo units without a password.
-// Scope is limited to these two units on purpose.
+// Scope is limited to these two units on purpose. Also allow flushing
+// the DNS cache (used when toggling the proxy so stale entries don't
+// linger) - harmless and local only.
 polkit.addRule(function(action, subject) {
+    if (!subject.isInGroup("wheel")) return;
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
-        subject.isInGroup("wheel") &&
         (action.lookup("unit") == "mihomo.service" ||
          action.lookup("unit") == "mihomo-sub-update.service")) {
+        return polkit.Result.YES;
+    }
+    if (action.id == "org.freedesktop.resolve1.flush-caches") {
         return polkit.Result.YES;
     }
 });
